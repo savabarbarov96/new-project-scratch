@@ -17,20 +17,64 @@ export class TestSpecificationService {
 
   async createTestSpecification(specData: Omit<TestSpecification, '_id' | 'createdAt' | 'updatedAt'>): Promise<ApiResponse<TestSpecification>> {
     try {
+      console.log('🔄 TestSpecificationService: Creating test specification...');
+      console.log('📊 Input data:', JSON.stringify(specData, null, 2));
+      
+      // Validate required fields
+      if (!specData.name || !specData.url || !specData.httpMethod || !specData.loadProfile) {
+        const missingFields = [];
+        if (!specData.name) missingFields.push('name');
+        if (!specData.url) missingFields.push('url');
+        if (!specData.httpMethod) missingFields.push('httpMethod');
+        if (!specData.loadProfile) missingFields.push('loadProfile');
+        
+        console.error('❌ Missing required fields:', missingFields);
+        return {
+          success: false,
+          error: `Missing required fields: ${missingFields.join(', ')}`,
+        };
+      }
+
+      console.log('✅ Input validation passed');
+      console.log('💾 Creating MongoDB document...');
+      
       const spec = new TestSpecificationModel(specData);
+      console.log('📄 Document created, attempting to save...');
+      
       const savedSpec = await spec.save();
+      console.log('✅ Document saved successfully with ID:', savedSpec._id);
       
       // Emit WebSocket event
       if (webSocketService) {
+        console.log('📡 Emitting WebSocket spec-created event...');
         webSocketService.emitSpecCreated((savedSpec._id as any).toString(), savedSpec.name);
+      } else {
+        console.warn('⚠️ WebSocket service not available for event emission');
       }
+
+      const result = this.documentToTestSpec(savedSpec);
+      console.log('🎉 Test specification created successfully:', result._id);
 
       return {
         success: true,
-        data: this.documentToTestSpec(savedSpec),
+        data: result,
         message: 'Test specification created successfully',
       };
     } catch (error) {
+      console.error('💥 Error in createTestSpecification:', error);
+      
+      // Log specific MongoDB errors
+      if (error instanceof Error) {
+        console.error('Error name:', error.name);
+        console.error('Error message:', error.message);
+        if ('code' in error) {
+          console.error('Error code:', (error as any).code);
+        }
+        if ('keyPattern' in error) {
+          console.error('Key pattern:', (error as any).keyPattern);
+        }
+      }
+      
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to create test specification',
@@ -40,7 +84,12 @@ export class TestSpecificationService {
 
   async getTestSpecifications(page: number = 1, limit: number = 10): Promise<PaginatedResponse<TestSpecification>> {
     try {
+      console.log(`🔍 TestSpecificationService: Fetching test specifications - page: ${page}, limit: ${limit}`);
+      
       const skip = (page - 1) * limit;
+      console.log(`📊 Query parameters - skip: ${skip}, limit: ${limit}`);
+      
+      console.log('💾 Executing MongoDB queries...');
       const [specs, total] = await Promise.all([
         TestSpecificationModel.find()
           .sort({ createdAt: -1 })
@@ -50,20 +99,33 @@ export class TestSpecificationService {
         TestSpecificationModel.countDocuments(),
       ]);
 
-      console.log('Found specs:', specs.length);
-      console.log('First spec:', specs[0]);
+      console.log(`📋 Query results - found ${specs.length} specs, total count: ${total}`);
+      
+      if (specs.length > 0) {
+        console.log('📄 First spec sample:', {
+          id: specs[0]._id,
+          name: specs[0].name,
+          createdAt: (specs[0] as any).createdAt
+        });
+      } else {
+        console.log('📭 No specifications found in database');
+      }
 
       const totalPages = Math.ceil(total / limit);
+      console.log(`📊 Pagination - total pages: ${totalPages}`);
 
+      console.log('🔄 Mapping documents to TestSpecification format...');
       const mappedSpecs = specs.map((spec, index) => {
-        console.log(`Mapping spec ${index}:`, spec);
+        console.log(`🔄 Mapping spec ${index + 1}/${specs.length}: ${spec._id}`);
         try {
           return this.leanDocumentToTestSpec(spec);
         } catch (error) {
-          console.error(`Error mapping spec ${index}:`, error);
+          console.error(`❌ Error mapping spec ${index} (${spec._id}):`, error);
           throw error;
         }
       });
+
+      console.log(`✅ Successfully mapped ${mappedSpecs.length} specifications`);
 
       return {
         success: true,
@@ -76,7 +138,17 @@ export class TestSpecificationService {
         },
       };
     } catch (error) {
-      console.error('Error in getTestSpecifications:', error);
+      console.error('💥 Error in getTestSpecifications:', error);
+      
+      // Log specific MongoDB errors
+      if (error instanceof Error) {
+        console.error('Error name:', error.name);
+        console.error('Error message:', error.message);
+        if ('code' in error) {
+          console.error('Error code:', (error as any).code);
+        }
+      }
+      
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to fetch test specifications',
