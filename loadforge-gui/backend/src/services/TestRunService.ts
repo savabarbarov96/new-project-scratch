@@ -1,4 +1,4 @@
-import { TestRun } from '../types/index.js';
+import { TestRun, TestSpecification } from '../types/index.js';
 import { TestRunModel } from '../models/TestRun.js';
 import { LoadTestEngine, LoadTestOptions } from './LoadTestEngine.js';
 import { TestSpecificationService } from './TestSpecificationService.js';
@@ -406,6 +406,13 @@ export class TestRunService {
         });
       }
     });
+  }
+
+  /**
+   * Get load engine statistics
+   */
+  getEngineStats() {
+    return this.loadTestEngine.getStats();
   }
 
   /**

@@ -1,6 +1,8 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
+import rateLimit from '@fastify/rate-limit';
+import helmet from '@fastify/helmet';
 import Joi from 'joi';
 import { createServer } from 'http';
 import { dbConnection } from './config/database.js';
@@ -52,6 +54,27 @@ async function start() {
     
     // Inject TestRunService into WebSocketService for stop requests
     webSocketService.setTestRunService(testRunService);
+
+    // Register security middleware
+    if (appConfig.security.enableHelmet) {
+      await fastify.register(helmet, {
+        contentSecurityPolicy: false, // Disable CSP for API
+      });
+    }
+
+    // Register rate limiting
+    await fastify.register(rateLimit, {
+      max: appConfig.security.rateLimitMax,
+      timeWindow: appConfig.security.rateLimitWindow,
+      errorResponseBuilder: function (request: any, context: any) {
+        return {
+          code: 429,
+          error: 'Too Many Requests',
+          message: `Rate limit exceeded, retry in ${Math.round(context.ttl / 1000)} seconds`,
+          expiresIn: Math.round(context.ttl / 1000)
+        };
+      }
+    });
 
     // Register CORS with proper multiple origin handling
     await fastify.register(cors, {
@@ -108,14 +131,52 @@ async function start() {
       },
     });
 
-    // Health check endpoint
+    // Enhanced health check endpoint
     fastify.get('/health', async (_request, _reply) => {
-      return {
+      const healthData = {
         status: 'ok',
         timestamp: new Date().toISOString(),
-        database: dbConnection.isConnected() ? 'connected' : 'disconnected',
-        websocket: webSocketService ? 'active' : 'inactive',
-        activeSubscriptions: webSocketService?.getActiveSubscriptions() || []
+        uptime: process.uptime(),
+        version: process.env.npm_package_version || '1.0.0',
+        environment: appConfig.server.nodeEnv,
+        services: {
+          database: {
+            status: dbConnection.isConnected() ? 'connected' : 'disconnected',
+            name: appConfig.database.dbName
+          },
+          websocket: {
+            status: webSocketService ? 'active' : 'inactive',
+            activeSubscriptions: webSocketService?.getActiveSubscriptions() || []
+          },
+          loadEngine: testRunService ? {
+            status: 'active',
+            stats: testRunService.getEngineStats ? testRunService.getEngineStats() : {}
+          } : { status: 'inactive' }
+        },
+        memory: {
+          used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+          total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
+          external: Math.round(process.memoryUsage().external / 1024 / 1024)
+        }
+      };
+
+      return healthData;
+    });
+
+    // API metrics endpoint
+    fastify.get('/metrics', async (_request, _reply) => {
+      return {
+        timestamp: new Date().toISOString(),
+        loadEngine: testRunService?.getEngineStats ? testRunService.getEngineStats() : {},
+        websocket: {
+          activeConnections: webSocketService?.getActiveSubscriptions()?.length || 0,
+          subscriptions: webSocketService?.getActiveSubscriptions() || []
+        },
+        system: {
+          uptime: process.uptime(),
+          memory: process.memoryUsage(),
+          cpu: process.cpuUsage()
+        }
       };
     });
     
@@ -148,6 +209,7 @@ async function start() {
     console.log(`📊 Environment: ${appConfig.server.nodeEnv}`);
     console.log(`🗄️  Database: ${appConfig.database.dbName}`);
     console.log(`🔌 WebSocket server initialized on same port`);
+    console.log(`🛡️  Security: Rate limiting (${appConfig.security.rateLimitMax} req/${appConfig.security.rateLimitWindow}ms), Helmet: ${appConfig.security.enableHelmet}`);
   } catch (error) {
     fastify.log.error(error);
     process.exit(1);
